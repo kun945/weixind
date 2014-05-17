@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # Filename:     weixind.py
-# Author:       chenkun<ckmx945@gmail.com>
+# Author:       chenkun<your_token@gmail.com>
 # CreateDate:   2014-05-15
 
 import os
@@ -12,7 +12,7 @@ from lxml import etree
 from weixin import WeiXinClient
 
 
-_TOKEN = 'ckmx945'
+_TOKEN = 'your_token'
 _URLS = (
     '/*', 'weixinserver',
 )

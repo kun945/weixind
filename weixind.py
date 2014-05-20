@@ -1,15 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # Filename:     weixind.py
-# Author:       chenkun<your_token@gmail.com>
+# Author:       Liang Cha<ckmx945@gmail.com>
 # CreateDate:   2014-05-15
 
 import os
 import web
 import time
 import hashlib
+import urllib
+import urllib2
 from lxml import etree
 from weixin import WeiXinClient
+from yeelink import YeeLinkClient
 
 
 _TOKEN = 'your_token'
@@ -112,6 +115,7 @@ class weixinserver:
         self.client = WeiXinClient('your_appid', \
                 'your_secret', fc = False)
         self.client.request_access_token()
+        self.yee = YeeLinkClient('yee_key')
 
     def _recv_text(self, fromUser, toUser, doc):
         content = doc.find('Content').text
@@ -124,10 +128,18 @@ class weixinserver:
             return _weixin_event_table[event](self, fromUser, toUser, doc)
         except KeyError, e:
             print '_recv_event: %s' %e
-            return server._reply_text(fromUser, toUser, u'Unknow event: '+event)
+            return self._reply_text(fromUser, toUser, u'Unknow event: '+event)
 
     def _recv_image(self, fromUser, toUser, doc):
-        pass
+        url = doc.find('PicUrl').text
+        req = urllib2.Request(url)
+        try:
+            resp = urllib2.urlopen(req, timeout = 2)
+            print self.yee.image.upload('10296', '16660', fd = resp)
+        except urllib2.HTTPError, e:
+            print e
+            return self._reply_text(fromUser, toUser, u'fail save:'+url)
+        return self._reply_text(fromUser, toUser, u'save:'+url)
 
     def _recv_voice(self, fromUser, toUser, doc):
         pass

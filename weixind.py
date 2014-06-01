@@ -57,17 +57,48 @@ def _get_user_info(wc):
         info_list.append({'name':name, 'place':place, 'sex':sex})
     return info_list
 
+
+def _arduino_client(data):
+    import select
+    import socket
+    c = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    c.setblocking(False)
+    inputs = [c]
+    c.connect(('192.168.1.20', 6666))
+    c.sendall(data)
+    readable, writeable, exceptional = select.select(inputs, [], [], 2)
+    if not readable:
+        return '{"errno": -1, "msg":"wait response timeout."}'
+    else:
+        return c.recv(1024)
+
+
+def _take_snapshot(addr, port, client):
+    url = 'http://%s:%d/?action=snapshot' %(addr, port)
+    req = urllib2.Request(url)
+    try:
+        resp = urllib2.urlopen(req, timeout = 2)
+    except urllib2.HTTPError, e:
+        print e
+        return  None
+    return client.media.upload.file(type='image', pic=resp)
+    
+
 def _do_event_subscribe(server, fromUser, toUser, doc):
     return server._reply_text(fromUser, toUser, u'hello!')
+
 
 def _do_event_unsubscribe(server, fromUser, toUser, doc):
     return server._reply_text(fromUser, toUser, u'bye!')
 
+
 def _do_event_SCAN(server, fromUser, toUser, doc):
     pass
 
+
 def _do_event_LOCATION(server, fromUser, toUser, doc):
     pass
+
 
 def _do_event_CLICK(server, fromUser, toUser, doc):
     key = doc.find('EventKey').text
@@ -76,6 +107,7 @@ def _do_event_CLICK(server, fromUser, toUser, doc):
     except KeyError, e:
         print '_do_event_CLICK: %s' %e
         return server._reply_text(fromUser, toUser, u'Unknow click: '+key)
+
 
 _weixin_event_table = {
     'subscribe'     :   _do_event_subscribe,
@@ -93,16 +125,83 @@ def _do_click_V1001_USER_LIST(server, fromUser, toUser, doc):
         reply_msg += '%s|%s|%s\n' %(user['name'], user['place'], user['sex'])
     return server._reply_text(fromUser, toUser, reply_msg)
 
+
 def _do_click_V1001_YELLOW_CHICK(server, fromUser, toUser, doc):
     pass
+
 
 def _do_click_V1001_GOOD(server, fromUser, toUser, doc):
     pass
 
+
+def _do_click_V1001_LED_ON(server, fromUser, toUser, doc):
+    data = '{"name":"digitalWrite", "para":{"pin":7, "value":1}}'
+    buf = _arduino_client(data)
+    errno = eval(buf)['errno']
+    reply_msg = None
+    if errno == 0:
+        reply_msg = '成功点亮'
+    elif errno == -1:
+        reply_msg = eval[buf]['msg']
+    else:
+        reply_msg = '点亮失败'
+    return server._reply_text(fromUser, toUser, reply_msg)
+    
+
+def _do_click_V1001_LED_OFF(server, fromUser, toUser, doc):
+    data = '{"name":"digitalWrite", "para":{"pin":7, "value":0}}'
+    buf = _arduino_client(data)
+    errno = eval(buf)['errno']
+    reply_msg = None
+    if errno == 0:
+        reply_msg = '成功关闭'
+    elif errno == -1:
+        reply_msg = eval[buf]['msg']
+    else:
+        reply_msg = '关闭失败'
+    return server._reply_text(fromUser, toUser, reply_msg)
+
+
+def _dew_point_fast(t, h):
+    import math
+    a = 17.27
+    b = 237.7
+    temp = (a * t) / (b + t) + math.log(h / 100);
+    td = (b * temp) / (a - temp);
+    return td
+
+
+def _do_click_SNAPSHOT(server, fromUser, toUser, doc):
+    data = _take_snapshot('192.168.1.10', 24567, server.client)
+    if data == None:
+        return server._reply_text(fromUser, toUser, 'snapshot fail.')
+    return server._reply_image(fromUser, toUser, data.media_id)
+
+
+def _do_click_V1001_TEMPERATURES(server, fromUser, toUser, doc):
+    data = '{"name":"environment", "para":{"pin":2}}'
+    buf = _arduino_client(data)
+    data = eval(buf)
+    errno = data['errno']
+    reply_msg = None
+    if errno == 0:
+        t = data['resp']['t']
+        h = data['resp']['h']
+        td = _dew_point_fast(t, h)
+        reply_msg = "室内温度: %.2f℃\n室内湿度: %.2f\n室内露点: %.2f" %(t, h, td)
+    else:
+        reply_msg = data['msg']
+    return server._reply_text(fromUser, toUser, reply_msg)
+
+
 _weixin_click_table = {
-        'V1001_USER_LIST'       :   _do_click_V1001_USER_LIST,
-        'V1001_YELLOW_CHICK'    :   _do_click_V1001_YELLOW_CHICK,
-        'V1001_V1001_GOOD'      :   _do_click_V1001_GOOD
+    'V1001_USER_LIST'       :   _do_click_V1001_USER_LIST,
+    'V1001_YELLOW_CHICK'    :   _do_click_V1001_YELLOW_CHICK,
+    'V1001_LED_ON'          :   _do_click_V1001_LED_ON,
+    'V1001_LED_OFF'         :   _do_click_V1001_LED_OFF,
+    'V1001_TEMPERATURES'    :   _do_click_V1001_TEMPERATURES,
+    'V1001_GOOD'            :   _do_click_V1001_GOOD,
+    'V1001_SNAPSHOT'        :   _do_click_SNAPSHOT
 }
 
 
@@ -138,11 +237,22 @@ class weixinserver:
             print self.yee.image.upload('10296', '16660', fd = resp)
         except urllib2.HTTPError, e:
             print e
-            return self._reply_text(fromUser, toUser, u'fail save:'+url)
-        return self._reply_text(fromUser, toUser, u'save:'+url)
+            return self._reply_text(fromUser, toUser, u'upload fail.')
+        view = 'http://www.yeelink.net/devices/10296'
+        return self._reply_text(fromUser, toUser, u'upload to:'+view)
 
     def _recv_voice(self, fromUser, toUser, doc):
-        pass
+        cmd = doc.find('Recognition').text;
+        if cmd is None:
+            return self._reply_text(fromUser, toUser, u'no Recognition, no command');
+        if cmd == u'开灯':
+            return _do_click_V1001_LED_ON(self, fromUser, toUser, doc)
+        elif cmd == u'关灯':
+            return _do_click_V1001_LED_OFF(self, fromUser, toUser, doc)
+        elif cmd == u'温度':
+            return _do_click_V1001_TEMPERATURES(self, fromUser, toUser, doc)
+        else:
+            return self._reply_text(fromUser, toUser, u'Unknow command: ' + cmd);
 
     def _recv_video(self, fromUser, toUser, doc):
         pass
@@ -155,6 +265,9 @@ class weixinserver:
 
     def _reply_text(self, toUser, fromUser, msg):
         return self.render.reply_text(toUser, fromUser, int(time.time()), msg)
+
+    def _reply_image(self, toUser, fromUser, media_id):
+        return self.render.reply_image(toUser, fromUser, int(time.time()), media_id)
 
     def GET(self):
         data = web.input()

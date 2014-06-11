@@ -7,11 +7,13 @@
 import os
 import web
 import time
-import hashlib
+import types
 import urllib
 import urllib2
+import hashlib
 from lxml import etree
 from weixin import WeiXinClient
+from weixin import APIError
 from yeelink import YeeLinkClient
 
 
@@ -64,11 +66,11 @@ def _arduino_client(data):
     c = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     c.setblocking(False)
     inputs = [c]
-    c.connect(('192.168.1.20', 6666))
+    c.connect(('192.168.1.10', 6666))
     c.sendall(data)
-    readable, writeable, exceptional = select.select(inputs, [], [], 2)
+    readable, writeable, exceptional = select.select(inputs, [], [], 3)
     if not readable:
-        return '{"errno": -1, "msg":"wait response timeout."}'
+        return '{"errno": -1, "msg":"wait response timeout"}'
     else:
         return c.recv(1024)
 
@@ -76,11 +78,7 @@ def _arduino_client(data):
 def _take_snapshot(addr, port, client):
     url = 'http://%s:%d/?action=snapshot' %(addr, port)
     req = urllib2.Request(url)
-    try:
-        resp = urllib2.urlopen(req, timeout = 2)
-    except urllib2.HTTPError, e:
-        print e
-        return  None
+    resp = urllib2.urlopen(req, timeout = 2)
     return client.media.upload.file(type='image', pic=resp)
     
 
@@ -131,34 +129,83 @@ def _do_click_V1001_YELLOW_CHICK(server, fromUser, toUser, doc):
 
 
 def _do_click_V1001_GOOD(server, fromUser, toUser, doc):
-    pass
+    import os
+    import random
+    url = 'http://chenkun945.cn/pictures/'
+    files = os.listdir('/var/www/pictures')
+    random.shuffle(files)
+    url += random.choice(files)
+    title = 'Judge not from appearances'
+    descrip = 'Never forget to say thanks.'
+    return server._reply_news(fromUser, toUser, title, descrip, url, url)
 
 
 def _do_click_V1001_LED_ON(server, fromUser, toUser, doc):
-    data = '{"name":"digitalWrite", "para":{"pin":7, "value":1}}'
+    data = '{"name":"digitalWrite","para":{"pin":7,"value":1}}'
     buf = _arduino_client(data)
-    errno = eval(buf)['errno']
+    print buf
+    data = eval(buf)
+    errno = None
     reply_msg = None
+    if type(data) is types.StringType:
+        return server._reply_text(fromUser, toUser, data)
+    errno = data['errno']
     if errno == 0:
-        reply_msg = '成功点亮'
-    elif errno == -1:
-        reply_msg = eval[buf]['msg']
+        reply_msg = '点亮成功'
     else:
-        reply_msg = '点亮失败'
+        reply_msg = buf
     return server._reply_text(fromUser, toUser, reply_msg)
     
 
 def _do_click_V1001_LED_OFF(server, fromUser, toUser, doc):
     data = '{"name":"digitalWrite", "para":{"pin":7, "value":0}}'
     buf = _arduino_client(data)
-    errno = eval(buf)['errno']
+    print buf
+    data = eval(buf)
+    errno = None
     reply_msg = None
+    if type(data) is types.StringType:
+        return server._reply_text(fromUser, toUser, data)
+    errno = data['errno']
     if errno == 0:
         reply_msg = '成功关闭'
-    elif errno == -1:
-        reply_msg = eval[buf]['msg']
     else:
-        reply_msg = '关闭失败'
+        reply_msg = buf
+    return server._reply_text(fromUser, toUser, reply_msg)
+
+
+
+def _do_click_V1001_C_RIGHT(server, fromUser, toUser, doc):
+    data = '{"name":"servo","para":{"value":1}}'
+    buf = _arduino_client(data)
+    print buf
+    data = eval(buf)
+    errno = None
+    reply_msg = None
+    if type(data) is types.StringType:
+        return server._reply_text(fromUser, toUser, data)
+    errno = data['errno']
+    if errno == 0:
+        reply_msg = "当前角度: %d" %(data['resp']['v'])
+    else:
+        reply_msg = buf
+    return server._reply_text(fromUser, toUser, reply_msg)
+
+
+def _do_click_V1001_C_LEFT(server, fromUser, toUser, doc):
+    data = '{"name":"servo","para":{"value":0}}'
+    buf = _arduino_client(data)
+    data = eval(buf)
+    print buf
+    errno = None
+    reply_msg = None
+    if type(data) is types.StringType:
+        return server._reply_text(fromUser, toUser, data)
+    errno = data['errno']
+    if errno == 0:
+        reply_msg = "当前角度: %d" %(data['resp']['v'])
+    else:
+        reply_msg = buf
     return server._reply_text(fromUser, toUser, reply_msg)
 
 
@@ -172,16 +219,24 @@ def _dew_point_fast(t, h):
 
 
 def _do_click_SNAPSHOT(server, fromUser, toUser, doc):
-    data = _take_snapshot('192.168.1.10', 24567, server.client)
-    if data == None:
-        return server._reply_text(fromUser, toUser, 'snapshot fail.')
+    data = None 
+    err_msg = 'snapshot fail: '
+    try:
+        data = _take_snapshot('192.168.1.10', 24567, server.client)
+    except Exception, e:
+        err_msg += str(e)
+        print '_do_click_SNAPSHOT', err_msg
+        return server._reply_text(fromUser, toUser, err_msg)
     return server._reply_image(fromUser, toUser, data.media_id)
 
 
 def _do_click_V1001_TEMPERATURES(server, fromUser, toUser, doc):
     data = '{"name":"environment", "para":{"pin":2}}'
     buf = _arduino_client(data)
+    print buf
     data = eval(buf)
+    if type(data) is types.StringType:
+        return server._reply_text(fromUser, toUser, data)
     errno = data['errno']
     reply_msg = None
     if errno == 0:
@@ -190,7 +245,7 @@ def _do_click_V1001_TEMPERATURES(server, fromUser, toUser, doc):
         td = _dew_point_fast(t, h)
         reply_msg = "室内温度: %.2f℃\n室内湿度: %.2f\n室内露点: %.2f" %(t, h, td)
     else:
-        reply_msg = data['msg']
+        reply_msg = buf
     return server._reply_text(fromUser, toUser, reply_msg)
 
 
@@ -201,7 +256,9 @@ _weixin_click_table = {
     'V1001_LED_OFF'         :   _do_click_V1001_LED_OFF,
     'V1001_TEMPERATURES'    :   _do_click_V1001_TEMPERATURES,
     'V1001_GOOD'            :   _do_click_V1001_GOOD,
-    'V1001_SNAPSHOT'        :   _do_click_SNAPSHOT
+    'V1001_SNAPSHOT'        :   _do_click_SNAPSHOT,
+    'V1001_C_LEFT'          :   _do_click_V1001_C_LEFT,
+    'V1001_C_RIGHT'         :   _do_click_V1001_C_RIGHT
 }
 
 
@@ -212,7 +269,7 @@ class weixinserver:
         self.templates_root = os.path.join(self.app_root, 'templates')
         self.render = web.template.render(self.templates_root)
         self.client = WeiXinClient('your_appid', \
-                'your_secret', fc = False)
+                'your_secret', fc = False, path = '192.168.1.12:11211')
         self.client.request_access_token()
         self.yee = YeeLinkClient('yee_key')
 
@@ -251,6 +308,8 @@ class weixinserver:
             return _do_click_V1001_LED_OFF(self, fromUser, toUser, doc)
         elif cmd == u'温度':
             return _do_click_V1001_TEMPERATURES(self, fromUser, toUser, doc)
+        elif cmd == u'照片':
+            return _do_click_SNAPSHOT(self, fromUser, toUser, doc)
         else:
             return self._reply_text(fromUser, toUser, u'Unknow command: ' + cmd);
 
@@ -269,6 +328,9 @@ class weixinserver:
     def _reply_image(self, toUser, fromUser, media_id):
         return self.render.reply_image(toUser, fromUser, int(time.time()), media_id)
 
+    def _reply_news(self, toUser, fromUser, title, descrip, picUrl, hqUrl):
+        return self.render.reply_news(toUser, fromUser, int(time.time()), title, descrip, picUrl, hqUrl)
+
     def GET(self):
         data = web.input()
         if _check_hash(data):
@@ -280,6 +342,7 @@ class weixinserver:
         msgType = doc.find('MsgType').text
         fromUser = doc.find('FromUserName').text
         toUser = doc.find('ToUserName').text
+        print 'from:%s-->to:%s' %(fromUser, toUser)
         if msgType == 'text':
             return self._recv_text(fromUser, toUser, doc)
         if msgType == 'event':

@@ -1,5 +1,3 @@
-build
-test.py
 replace.sh
+*.pyc
 weixind.py.bak
-access_token

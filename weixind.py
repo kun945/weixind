@@ -46,10 +46,12 @@ def _check_user(user_id):
 
 def _get_user_info(wc):
     import memcache
-    info_list = None
-    wkey = 'wacthers_%s' % server.client.app_id
+    info_list = []
+    wkey = 'wacthers_%s' % wc.app_id
     mc = memcache.Client(['192.168.1.12:11211'], debug=0)
     id_list = mc.get(wkey)
+    if id_list is None:
+        return info_list
     for open_id in id_list:
         req = wc.user.info._get(openid=open_id, lang='zh_CN')
         name ='%s' %(req.nickname)
@@ -122,10 +124,12 @@ def _do_click_V1001_USER_LIST(server, fromUser, toUser, doc):
         reply_msg = '_get_user_info error: %r', e
     if user_list:
         reply_msg = ''
+        index = 0
         for user in user_list:
-            reply_msg.join('%s|%s|%s\n' %(user['name'], user['place'], user['sex']))
+            reply_msg = '%s[%d]%s|%s|%s\n' %(reply_msg, index, user['name'], user['place'], user['sex'])
+            index += 1
     else:
-        if not reply_msg
+        if not reply_msg:
             reply_msg = 'None user.'
     return server._reply_text(fromUser, toUser, reply_msg)
 
@@ -327,6 +331,22 @@ def _do_text_command_security(server, fromUser, toUser, para):
     return server._reply_text(fromUser, toUser, reply_msg)
 
 
+def _do_text_command_kick_out(server, fromUser, toUser, para):
+    import memcache
+    msg = 'List is None.'
+    wkey = 'wacthers_%s' % server.client.app_id
+    try:
+        mc = memcache.Client(['192.168.1.12:11211'], debug=0)
+        wlist = mc.get(wkey)
+        if wlist != None:
+            del wlist[int(para[0])]
+            mc.replace(wkey, wlist)
+            msg = 'Kick out user index=%s' %para
+    except Exception, e:
+        msg = '_do_text_kick_out error, %r' % e
+    return server._reply_text(fromUser, toUser, msg)
+
+
 def _do_text_command_help(server, fromUser, toUser, para):
     data = "commands:\n"
     for (k, v) in _weixin_text_command_table.items():
@@ -338,7 +358,8 @@ _weixin_text_command_table = {
     'help'                  :   _do_text_command_help,
     'weight'                :   _do_text_command_weight,
     'servo'                 :   _do_text_command_servo,
-    'security'              :   _do_text_command_security
+    'security'              :   _do_text_command_security,
+    'kick'                  :   _do_text_command_kick_out
 }
 
 

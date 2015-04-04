@@ -11,6 +11,7 @@ import types
 import urllib
 import urllib2
 import hashlib
+import memcache
 from lxml import etree
 from weixin import WeiXinClient
 from weixin import APIError
@@ -45,7 +46,6 @@ def _check_user(user_id):
     return False
 
 def _get_user_info(wc):
-    import memcache
     info_list = []
     wkey = 'wacthers_%s' % wc.app_id
     mc = memcache.Client(['192.168.1.12:11211'], debug=0)
@@ -118,12 +118,12 @@ _weixin_event_table = {
 
 
 def _do_click_V1001_USER_LIST(server, fromUser, toUser, doc):
+    reply_msg = ''
     try:
         user_list = _get_user_info(server.client)
     except Exception, e:
         reply_msg = '_get_user_info error: %r', e
     if user_list:
-        reply_msg = ''
         index = 0
         for user in user_list:
             reply_msg = '%s[%d]%s|%s|%s\n' %(reply_msg, index, user['name'], user['place'], user['sex'])
@@ -135,7 +135,6 @@ def _do_click_V1001_USER_LIST(server, fromUser, toUser, doc):
 
 
 def _do_click_V1001_GOOD(server, fromUser, toUser, doc):
-    import memcache
     msg = '你已经加入监控队列。'
     wkey = 'wacthers_%s' % server.client.app_id
     try:
@@ -188,36 +187,93 @@ def _do_click_V1001_LED_OFF(server, fromUser, toUser, doc):
 
 
 
-def _do_click_V1001_C_RIGHT(server, fromUser, toUser, doc):
-    data = '{"name":"servo","para":{"value":1}}'
-    buf = _arduino_client(data)
-    data = eval(buf)
-    errno = None
-    reply_msg = None
-    if type(data) is types.StringType:
-        return server._reply_text(fromUser, toUser, data)
-    errno = data['errno']
-    if errno == 0:
-        reply_msg = "当前角度: %d" %(data['resp']['v'])
+#def _do_click_V1001_C_RIGHT(server, fromUser, toUser, doc):
+    #data = '{"name":"servo","para":{"value":1}}'
+    #buf = _arduino_client(data)
+    #data = eval(buf)
+    #errno = None
+    #reply_msg = None
+    #if type(data) is types.StringType:
+        #return server._reply_text(fromUser, toUser, data)
+    #errno = data['errno']
+    #if errno == 0:
+        #reply_msg = "当前角度: %d" %(data['resp']['v'])
+    #else:
+        #reply_msg = buf
+    #return server._reply_text(fromUser, toUser, reply_msg)
+
+
+#def _do_click_V1001_C_LEFT(server, fromUser, toUser, doc):
+    #data = '{"name":"servo","para":{"value":-1}}'
+    #buf = _arduino_client(data)
+    #data = eval(buf)
+    #errno = None
+    #reply_msg = None
+    #if type(data) is types.StringType:
+        #return server._reply_text(fromUser, toUser, data)
+    #errno = data['errno']
+    #if errno == 0:
+        #reply_msg = "当前角度: %d" %(data['resp']['v'])
+    #else:
+        #reply_msg = buf
+    #return server._reply_text(fromUser, toUser, reply_msg)
+
+
+(USW_PLS, USW_SUB, USW_OBS) = range(3)
+
+
+def _update_servo_width(operation, value=45):
+    """TODO: Docstring for _update_servo_width.
+
+    :operation: USW_PLS|USW_SUB|USW_OBS
+    :value: USW_OBS will be use. 
+    :returns: current width; return 0 if operation error.
+
+    """
+    from RPIO import PWM
+    wkey = 'wx_servo'
+    servo = PWM.Servo()
+    mc = memcache.Client(['192.168.1.12:11211'], debug=0)
+    width = mc.get(wkey)
+    if width is None:
+        mc.set(wkey, 45)
+        width = 45
+
+    if operation == USW_PLS:
+        width += 30
+    elif operation == USW_SUB:
+        width -= 30
+    elif operation == USW_OBS:
+        width = value
     else:
-        reply_msg = buf
-    return server._reply_text(fromUser, toUser, reply_msg)
+        return 0
+
+    if width > 205:
+        width = 205
+    elif width < 45:
+        width = 45
+
+    mc.replace(wkey, width)
+    servo.set_servo(17, width * 10)
+    return width
+
+
+def _do_click_V1001_C_RIGHT(server, fromUser, toUser, doc):
+    try:
+        width = _update_servo_width(USW_PLS)
+        msg = 'servo width is %d.' % width
+    except Exception, e:
+        msg = '_do_click_V1001_C_RIGHT error, %r' % e
+    return server._reply_text(fromUser, toUser, msg)
 
 
 def _do_click_V1001_C_LEFT(server, fromUser, toUser, doc):
-    data = '{"name":"servo","para":{"value":-1}}'
-    buf = _arduino_client(data)
-    data = eval(buf)
-    errno = None
-    reply_msg = None
-    if type(data) is types.StringType:
-        return server._reply_text(fromUser, toUser, data)
-    errno = data['errno']
-    if errno == 0:
-        reply_msg = "当前角度: %d" %(data['resp']['v'])
-    else:
-        reply_msg = buf
-    return server._reply_text(fromUser, toUser, reply_msg)
+    try:
+        width = _update_servo_width(USW_SUB)
+        msg = 'servo width is %d.' % width
+    except Exception, e:
+        msg = '_do_click_V1001_C_LEFT error, %r' % e
+    return server._reply_text(fromUser, toUser, msg)
 
 
 def _do_click_SNAPSHOT(server, fromUser, toUser, doc):
@@ -293,22 +349,32 @@ def _do_text_command_weight(server, fromUser, toUser, para):
     return server._reply_text(fromUser, toUser, u'upload to:'+view)
 
 
+#def _do_text_command_servo(server, fromUser, toUser, para):
+    #try:
+        #data = '{"name":"servo","para":{"value":%d}}' %(int(para[0]))
+    #except Exception, e:
+        #return server._reply_text(fromUser, toUser, str(e))
+    #buf = _arduino_client(data)
+    #data = eval(buf)
+    #errno = None
+    #reply_msg = None
+    #if type(data) is types.StringType:
+        #return server._reply_text(fromUser, toUser, data)
+    #errno = data['errno']
+    #if errno == 0:
+        #reply_msg = "当前角度: %d" %(data['resp']['v'])
+    #else:
+        #reply_msg = buf
+    #return server._reply_text(fromUser, toUser, reply_msg)
+
+
 def _do_text_command_servo(server, fromUser, toUser, para):
     try:
-        data = '{"name":"servo","para":{"value":%d}}' %(int(para[0]))
+        data = int(para[0])
     except Exception, e:
         return server._reply_text(fromUser, toUser, str(e))
-    buf = _arduino_client(data)
-    data = eval(buf)
-    errno = None
-    reply_msg = None
-    if type(data) is types.StringType:
-        return server._reply_text(fromUser, toUser, data)
-    errno = data['errno']
-    if errno == 0:
-        reply_msg = "当前角度: %d" %(data['resp']['v'])
-    else:
-        reply_msg = buf
+    width = _update_servo_width(USW_OBS, data)
+    reply_msg = "current width %d." %(width)
     return server._reply_text(fromUser, toUser, reply_msg)
 
 
@@ -332,7 +398,6 @@ def _do_text_command_security(server, fromUser, toUser, para):
 
 
 def _do_text_command_kick_out(server, fromUser, toUser, para):
-    import memcache
     msg = 'List is None.'
     wkey = 'wacthers_%s' % server.client.app_id
     try:

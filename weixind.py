@@ -12,6 +12,8 @@ import urllib
 import urllib2
 import hashlib
 import memcache
+import RPi.GPIO as GPIO
+from RPIO import PWM
 from lxml import etree
 from weixin import WeiXinClient
 from weixin import APIError
@@ -77,11 +79,22 @@ def _arduino_client(data):
 
 
 def _take_snapshot(addr, port, client):
-    url = 'http://%s:%d/?action=snapshot' %(addr, port)
-    req = urllib2.Request(url)
-    resp = urllib2.urlopen(req, timeout = 2)
-    return client.media.upload.file(type='image', pic=resp)
-    
+    import ipcam
+    cam = ipcam.IPCamClient('100.0.0.101', 367, 'lc', '13785')
+    vd = None
+    try:
+        vd = cam.photoaf.get()
+    except Exception, e:
+        print e
+    return client.media.upload.file(type='image', pic=vd)
+
+
+#def _take_snapshot(addr, port, client):
+#    url = 'http://%s:%d/?action=snapshot' %(addr, port)
+#    req = urllib2.Request(url)
+#    resp = urllib2.urlopen(req, timeout = 2)
+#    return client.media.upload.file(type='image', pic=resp)
+
 
 def _do_event_subscribe(server, fromUser, toUser, doc):
     return server._reply_text(fromUser, toUser, u'hello!')
@@ -119,10 +132,12 @@ _weixin_event_table = {
 
 def _do_click_V1001_USER_LIST(server, fromUser, toUser, doc):
     reply_msg = ''
+    user_list = None
     try:
         user_list = _get_user_info(server.client)
     except Exception, e:
         reply_msg = '_get_user_info error: %r', e
+        server.client.refurbish_access_token()
     if user_list:
         index = 0
         for user in user_list:
@@ -154,35 +169,54 @@ def _do_click_V1001_GOOD(server, fromUser, toUser, doc):
     return server._reply_text(fromUser, toUser, msg)
 
 
+#def _do_click_V1001_LED_ON(server, fromUser, toUser, doc):
+#    data = '{"name":"digitalWrite","para":{"pin":7,"value":1}}'
+#    buf = _arduino_client(data)
+#    data = eval(buf)
+#    errno = None
+#    reply_msg = None
+#    if type(data) is types.StringType:
+#        return server._reply_text(fromUser, toUser, data)
+#    errno = data['errno']
+#    if errno == 0:
+#        reply_msg = '成功点亮'
+#    else:
+#        reply_msg = buf
+#    return server._reply_text(fromUser, toUser, reply_msg)
+
+
 def _do_click_V1001_LED_ON(server, fromUser, toUser, doc):
-    data = '{"name":"digitalWrite","para":{"pin":7,"value":1}}'
-    buf = _arduino_client(data)
-    data = eval(buf)
-    errno = None
-    reply_msg = None
-    if type(data) is types.StringType:
-        return server._reply_text(fromUser, toUser, data)
-    errno = data['errno']
-    if errno == 0:
+    GPIO.output(18, GPIO.HIGH)
+    if GPIO.input(18):
         reply_msg = '成功点亮'
     else:
-        reply_msg = buf
+        reply_msg = '没有点亮'
     return server._reply_text(fromUser, toUser, reply_msg)
-    
+
+
+
+#def _do_click_V1001_LED_OFF(server, fromUser, toUser, doc):
+#    data = '{"name":"digitalWrite", "para":{"pin":7, "value":0}}'
+#    buf = _arduino_client(data)
+#    data = eval(buf)
+#    errno = None
+#    reply_msg = None
+#    if type(data) is types.StringType:
+#        return server._reply_text(fromUser, toUser, data)
+#    errno = data['errno']
+#    if errno == 0:
+#        reply_msg = '成功关闭'
+#    else:
+#        reply_msg = buf
+#    return server._reply_text(fromUser, toUser, reply_msg)
+
 
 def _do_click_V1001_LED_OFF(server, fromUser, toUser, doc):
-    data = '{"name":"digitalWrite", "para":{"pin":7, "value":0}}'
-    buf = _arduino_client(data)
-    data = eval(buf)
-    errno = None
-    reply_msg = None
-    if type(data) is types.StringType:
-        return server._reply_text(fromUser, toUser, data)
-    errno = data['errno']
-    if errno == 0:
-        reply_msg = '成功关闭'
+    GPIO.output(18, GPIO.LOW)
+    if not GPIO.input(18):
+        reply_msg = '成功熄灭'
     else:
-        reply_msg = buf
+        reply_msg = '没有熄灭'
     return server._reply_text(fromUser, toUser, reply_msg)
 
 
@@ -226,13 +260,12 @@ def _update_servo_width(operation, value=45):
     """TODO: Docstring for _update_servo_width.
 
     :operation: USW_PLS|USW_SUB|USW_OBS
-    :value: USW_OBS will be use. 
+    :value: USW_OBS will be use.
     :returns: current width; return 0 if operation error.
 
     """
-    from RPIO import PWM
     wkey = 'wx_servo'
-    servo = PWM.Servo()
+    #servo = PWM.Servo()
     mc = memcache.Client(['192.168.1.12:11211'], debug=0)
     width = mc.get(wkey)
     if width is None:
@@ -254,7 +287,18 @@ def _update_servo_width(operation, value=45):
         width = 45
 
     mc.replace(wkey, width)
-    servo.set_servo(17, width * 10)
+    #servo.set_servo(17, width * 10)
+    #time.sleep(1)
+    #servo.stop_servo(17)
+    if PWM.is_setup() == 0:
+        PWM.setup()
+    if PWM.is_channel_initialized(0) == 0:
+        PWM.init_channel(0)
+    PWM.add_channel_pulse(0, 17, 0, width)
+    time.sleep(1)
+    #PWM.clear_channel_gpio(0, 17)
+    PWM.clear_channel(0)
+    #PWM.cleanup()
     return width
 
 
@@ -279,7 +323,7 @@ def _do_click_V1001_C_LEFT(server, fromUser, toUser, doc):
 def _do_click_SNAPSHOT(server, fromUser, toUser, doc):
     if not _check_user(fromUser):
         return server._reply_text(fromUser, toUser, u'Permission denied…')
-    data = None 
+    data = None
     err_msg = 'snapshot fail: '
     try:
         data = _take_snapshot('192.168.1.12', 34567, server.client)
@@ -290,7 +334,7 @@ def _do_click_SNAPSHOT(server, fromUser, toUser, doc):
 
 
 def _do_click_V1001_TEMPERATURES(server, fromUser, toUser, doc):
-    
+
     def _dew_point_fast(t, h):
         import math
         a = 17.27
@@ -415,7 +459,7 @@ def _do_text_command_kick_out(server, fromUser, toUser, para):
 def _do_text_command_help(server, fromUser, toUser, para):
     data = "commands:\n"
     for (k, v) in _weixin_text_command_table.items():
-        data += "\t%s\n" %(k) 
+        data += "\t%s\n" %(k)
     return server._reply_text(fromUser, toUser, data)
 
 
@@ -438,6 +482,9 @@ class weixinserver:
                 'my_secret', fc=False, path='192.168.1.12:11211')
         self.client.request_access_token()
         self.yee = YeeLinkClient('yee_key')
+        #GPIO.cleanup()
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(18, GPIO.OUT)
 
     def _recv_text(self, fromUser, toUser, doc):
         content = doc.find('Content').text

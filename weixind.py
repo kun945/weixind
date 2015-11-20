@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # Filename:     weixind.py
-# Author:       Liang Cha<ckmx945@gmail.com>
+# Author:       Liang Cha<my_token@gmail.com>
 # CreateDate:   2014-05-15
 
 import os
@@ -80,12 +80,8 @@ def _arduino_client(data):
 
 def _take_snapshot(addr, port, client):
     import ipcam
-    cam = ipcam.IPCamClient('100.0.0.101', 367, 'lc', '13785')
-    vd = None
-    try:
-        vd = cam.photoaf.get()
-    except Exception, e:
-        print e
+    cam = ipcam.IPCamClient('10.0.0.101', 34567, 'ckmx', '159357852')
+    vd = cam.photoaf.get()
     return client.media.upload.file(type='image', pic=vd)
 
 

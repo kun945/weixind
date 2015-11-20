@@ -2,6 +2,7 @@
 # encoding: utf-8
 
 import requests
+#from lxml import etree
 from requests.auth import HTTPDigestAuth
 
 
@@ -16,6 +17,10 @@ _AUDIO_TYPES = ('wav', 'aac', 'opus')
 _HTTP_GET, _HTTP_POST = ('get', 'post')
 
 _VIDEO_BOUNDARY = '--Ba4oTvQMY8ew04N8dcnM'
+
+_XML_CONTENT_TYPE = 'application/xml'
+
+_JSON_CONTENT_TYPE = 'application/json'
 
 _IMAGE_CONTENT_TYPE = 'image/jpeg'
 
@@ -36,19 +41,27 @@ class IPCamError(StandardError):
 
 def _parse_params(**kw):
     '''Parse the parameters of the need'''
+    params = []
     stream = False
     for k, v in kw.iteritems():
         #print _parse_params.func_name, k, v
         if k == 'stream':
             stream = v
-    return stream
+            continue
+        if v == None:
+            params.append('%s=' %k)
+        else:
+            params.append('%s=%s' %(k, str(v)))
+    return stream, '&'.join(params)
 
 
 def _ipcam_http_call(ipcam, method, url, **kw):
-    #print _ipcam_http_call.func_name, url
     resp = None
     auth = None
-    stream = _parse_params(**kw)
+    stream, params = _parse_params(**kw)
+    if params:
+        url = '%s?%s' %(url, params)
+    print _ipcam_http_call.func_name, url
     if ipcam._user and ipcam._pass:
         auth = HTTPDigestAuth(ipcam._user,ipcam._pass)
     if method == _HTTP_GET:
@@ -56,14 +69,18 @@ def _ipcam_http_call(ipcam, method, url, **kw):
     if resp.status_code != 200:
         resp.close()
         raise IPCamError(4001, 'request server failed, status_code=%d' %resp.status_code)
-    #print resp.headers['Content-Type']
+    print resp.headers['Content-Type']
     if resp.headers['Content-Type'] == _IMAGE_CONTENT_TYPE:
         return Image(resp)
     if resp.headers['Content-Type'] == _VIDEO_CONTENT_TYPE:
         return Video(resp)
     if resp.headers['Content-Type'] in _AUDIO_CONTENT_TYPES:
         return Audio(resp)
-    return resp
+    if resp.headers['Content-Type'] == _XML_CONTENT_TYPE:
+        return Xml(resp)
+    if resp.headers['Content-Type'] == _JSON_CONTENT_TYPE:
+        return Json(resp)
+    raise IPCamError(4002, 'not support this content-type:%s' resp.headers['Content-Type'])
 
 
 def _video_header_parse(resp):
@@ -83,38 +100,65 @@ def _video_header_parse(resp):
     return headers
 
 
-class Audio(object):
-
-    """Used to read the Audio data"""
+class IPcamResponse(object):
 
     def __init__(self, resp):
-        """Initialize
-
-        :readp: TODO
-
-        """
         self._resp = resp
 
-    def read(self, amt):
-        '''Read audio data'''
-        return self._resp.raw.read(amt)
+    def read(self):
+        pass
 
     def close(self):
         '''Disconnect'''
         self._resp.close()
 
 
-class Video(object):
+class Xml(IPcamResponse):
 
-    """Used to read the video data"""
+    '''Dealing with XML response data'''
 
     def __init__(self, resp):
-        """Initialize
+        IPcamResponse.__init__(self, resp)
 
-        :readp: TODO
+    def read(self):
+        return self._resp.content
 
-        """
-        self._resp = resp
+    def __str__(self):
+        return _XML_CONTENT_TYPE
+
+
+class Json(Xml):
+
+    '''Dealing with JSON response data'''
+
+    def __init__(self, resp):
+        Xml.__init__(self, resp)
+
+    def __str__(self):
+        return _JSON_CONTENT_TYPE
+
+
+class Audio(IPcamResponse):
+
+    '''Used to read the Audio data'''
+
+    def __init__(self, resp):
+        IPcamResponse.__init__(self, resp)
+
+    def read(self, amt):
+        '''Read audio data'''
+        return self._resp.raw.read(amt)
+
+    def __str__(self):
+        return _AUDIO_CONTENT_TYPES
+
+
+class Video(IPcamResponse):
+
+    '''Used to read the video data'''
+
+    def __init__(self, resp):
+        IPcamResponse.__init__(self, resp)
 
     def read(self):
         '''Read one frame, return data'''
@@ -122,46 +166,40 @@ class Video(object):
         content_length = int(headers['Content-Length'])
         return self._resp.raw.read(content_length)
 
-    def close(self):
-        '''Disconnect'''
-        self._resp.close()
+    def __str__(self):
+        return _VIDEO_CONTENT_TYPE
 
 
-class Image(object):
+class Image(IPcamResponse):
 
-    """Used to read the image data"""
+    '''Used to read the image data'''
 
     def __init__(self, resp):
-        """Initialize
-
-        :resp: ipcam http response conntent
-
-        """
-        self._resp = resp
+        IPcamResponse.__init__(self, resp)
 
     def read(self):
         '''Return all image date'''
         for chunk in self._resp.iter_content(self._resp.raw.tell()):
             return chunk
 
-    def close(self):
-        '''Disconnect'''
-        self._resp.close()
+    def __str__(self):
+        return _IMAGE_CONTENT_TYPE
 
 
 class IPCamClient(object):
 
-    """IPCam client"""
+    '''IPCam client'''
 
     def __init__(self, ip, port, user=None, passw=None):
-        """Set ip, port and user information.
+        '''
+        Set ip, port and user information.
 
         :ip: IPCam ip
         :port: IPCam port
         :user: User name
         :pass: password
+        '''
 
-        """
         self._ip = ip
         self._port = port
         self._user = user
@@ -219,11 +257,4 @@ class _Callable(object):
 
 
 if __name__ == '__main__':
-    ipcam = IPCamClient('10.0.0.101', 34567, 'lc', '193782')
-    resp = ipcam.audio.wav.get(stream=True)
-    fd = open('a.wav', 'wb')
-    for i in range(100000):
-        fd.write(resp.read(1024))
-    fd.close()
-    resp.close()
-    exit(0)
+    pass

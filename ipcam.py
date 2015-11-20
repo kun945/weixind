@@ -80,7 +80,7 @@ def _ipcam_http_call(ipcam, method, url, **kw):
         return Xml(resp)
     if resp.headers['Content-Type'] == _JSON_CONTENT_TYPE:
         return Json(resp)
-    raise IPCamError(4002, 'not support this content-type:%s' resp.headers['Content-Type'])
+    raise IPCamError(4002, 'not support this content-type' %reasp.headers['Content-Type'])
 
 
 def _video_header_parse(resp):

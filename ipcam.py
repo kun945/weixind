@@ -65,7 +65,7 @@ def _ipcam_http_call(ipcam, method, url, **kw):
     if ipcam._user and ipcam._pass:
         auth = HTTPDigestAuth(ipcam._user,ipcam._pass)
     if method == _HTTP_GET:
-        resp = requests.get(url, auth=auth, stream=stream, timeout=8)
+        resp = requests.get(url, auth=auth, stream=stream, timeout=2)
     if resp.status_code != 200:
         resp.close()
         raise IPCamError(4001, 'request server failed, status_code=%d' %resp.status_code)

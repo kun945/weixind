@@ -8,17 +8,12 @@ import os
 import web
 import time
 import types
-import urllib
-import urllib2
 import hashlib
 import memcache
 import RPi.GPIO as GPIO
-from RPIO import PWM
 from lxml import etree
 from weixin import WeiXinClient
 from weixin import APIError
-from yeelink import current_time
-from yeelink import YeeLinkClient
 
 
 _TOKEN = 'my_token'
@@ -50,7 +45,7 @@ def _check_user(user_id):
 def _get_user_info(wc):
     info_list = []
     wkey = 'wacthers_%s' % wc.app_id
-    mc = memcache.Client(['192.168.1.12:11211'], debug=0)
+    mc = memcache.Client(['127.0.0.1:11211'], debug=0)
     id_list = mc.get(wkey)
     if id_list is None:
         return info_list
@@ -80,16 +75,9 @@ def _arduino_client(data):
 
 def _take_snapshot(addr, port, client):
     import ipcam
-    cam = ipcam.IPCamClient('10.0.0.101', 34567, 'ckmx', '159357852')
+    cam = ipcam.IPCamClient('10.0.0.101', 11000, 'll', '8898')
     vd = cam.photoaf.get()
     return client.media.upload.file(type='image', pic=vd)
-
-
-#def _take_snapshot(addr, port, client):
-#    url = 'http://%s:%d/?action=snapshot' %(addr, port)
-#    req = urllib2.Request(url)
-#    resp = urllib2.urlopen(req, timeout = 2)
-#    return client.media.upload.file(type='image', pic=resp)
 
 
 def _do_event_subscribe(server, fromUser, toUser, doc):
@@ -126,7 +114,7 @@ _weixin_event_table = {
 }
 
 
-def _do_click_V1001_USER_LIST(server, fromUser, toUser, doc):
+def _do_click_V2001_LIST(server, fromUser, toUser, doc):
     reply_msg = ''
     user_list = None
     try:
@@ -145,11 +133,11 @@ def _do_click_V1001_USER_LIST(server, fromUser, toUser, doc):
     return server._reply_text(fromUser, toUser, reply_msg)
 
 
-def _do_click_V1001_GOOD(server, fromUser, toUser, doc):
+def _do_click_V2001_JOIN(server, fromUser, toUser, doc):
     msg = '你已经加入监控队列。'
     wkey = 'wacthers_%s' % server.client.app_id
     try:
-        mc = memcache.Client(['192.168.1.12:11211'], debug=0)
+        mc = memcache.Client(['127.0.0.1:11211'], debug=0)
         wlist = mc.get(wkey)
         if wlist is None:
             mc.set(wkey, [])
@@ -165,206 +153,54 @@ def _do_click_V1001_GOOD(server, fromUser, toUser, doc):
     return server._reply_text(fromUser, toUser, msg)
 
 
-#def _do_click_V1001_LED_ON(server, fromUser, toUser, doc):
-#    data = '{"name":"digitalWrite","para":{"pin":7,"value":1}}'
-#    buf = _arduino_client(data)
-#    data = eval(buf)
-#    errno = None
-#    reply_msg = None
-#    if type(data) is types.StringType:
-#        return server._reply_text(fromUser, toUser, data)
-#    errno = data['errno']
-#    if errno == 0:
-#        reply_msg = '成功点亮'
-#    else:
-#        reply_msg = buf
-#    return server._reply_text(fromUser, toUser, reply_msg)
+def _do_click_V2001_MONITORING(server, fromUser, toUser, doc):
+    return server._reply_text(fromUser, toUser, 'monitoring...')
 
 
-def _do_click_V1001_LED_ON(server, fromUser, toUser, doc):
-    GPIO.output(18, GPIO.HIGH)
+def _do_click_V1001_SOCKET(server, fromUser, toUser, doc):
     if GPIO.input(18):
-        reply_msg = '成功点亮'
+        GPIO.output(18, GPIO.LOW)
     else:
-        reply_msg = '没有点亮'
+        GPIO.output(18, GPIO.HIGH)
+    if GPIO.input(18):
+        reply_msg = '打开状态'
+    else:
+        reply_msg = '关闭状态'
     return server._reply_text(fromUser, toUser, reply_msg)
 
 
-
-#def _do_click_V1001_LED_OFF(server, fromUser, toUser, doc):
-#    data = '{"name":"digitalWrite", "para":{"pin":7, "value":0}}'
-#    buf = _arduino_client(data)
-#    data = eval(buf)
-#    errno = None
-#    reply_msg = None
-#    if type(data) is types.StringType:
-#        return server._reply_text(fromUser, toUser, data)
-#    errno = data['errno']
-#    if errno == 0:
-#        reply_msg = '成功关闭'
-#    else:
-#        reply_msg = buf
-#    return server._reply_text(fromUser, toUser, reply_msg)
-
-
-def _do_click_V1001_LED_OFF(server, fromUser, toUser, doc):
-    GPIO.output(18, GPIO.LOW)
-    if not GPIO.input(18):
-        reply_msg = '成功熄灭'
-    else:
-        reply_msg = '没有熄灭'
-    return server._reply_text(fromUser, toUser, reply_msg)
-
-
-
-#def _do_click_V1001_C_RIGHT(server, fromUser, toUser, doc):
-    #data = '{"name":"servo","para":{"value":1}}'
-    #buf = _arduino_client(data)
-    #data = eval(buf)
-    #errno = None
-    #reply_msg = None
-    #if type(data) is types.StringType:
-        #return server._reply_text(fromUser, toUser, data)
-    #errno = data['errno']
-    #if errno == 0:
-        #reply_msg = "当前角度: %d" %(data['resp']['v'])
-    #else:
-        #reply_msg = buf
-    #return server._reply_text(fromUser, toUser, reply_msg)
-
-
-#def _do_click_V1001_C_LEFT(server, fromUser, toUser, doc):
-    #data = '{"name":"servo","para":{"value":-1}}'
-    #buf = _arduino_client(data)
-    #data = eval(buf)
-    #errno = None
-    #reply_msg = None
-    #if type(data) is types.StringType:
-        #return server._reply_text(fromUser, toUser, data)
-    #errno = data['errno']
-    #if errno == 0:
-        #reply_msg = "当前角度: %d" %(data['resp']['v'])
-    #else:
-        #reply_msg = buf
-    #return server._reply_text(fromUser, toUser, reply_msg)
-
-
-(USW_PLS, USW_SUB, USW_OBS) = range(3)
-
-
-def _update_servo_width(operation, value=45):
-    """TODO: Docstring for _update_servo_width.
-
-    :operation: USW_PLS|USW_SUB|USW_OBS
-    :value: USW_OBS will be use.
-    :returns: current width; return 0 if operation error.
-
-    """
-    wkey = 'wx_servo'
-    #servo = PWM.Servo()
-    mc = memcache.Client(['192.168.1.12:11211'], debug=0)
-    width = mc.get(wkey)
-    if width is None:
-        mc.set(wkey, 45)
-        width = 45
-
-    if operation == USW_PLS:
-        width += 30
-    elif operation == USW_SUB:
-        width -= 30
-    elif operation == USW_OBS:
-        width = value
-    else:
-        return 0
-
-    if width > 205:
-        width = 205
-    elif width < 45:
-        width = 45
-
-    mc.replace(wkey, width)
-    #servo.set_servo(17, width * 10)
-    #time.sleep(1)
-    #servo.stop_servo(17)
-    if PWM.is_setup() == 0:
-        PWM.setup()
-    if PWM.is_channel_initialized(0) == 0:
-        PWM.init_channel(0)
-    PWM.add_channel_pulse(0, 17, 0, width)
-    time.sleep(1)
-    #PWM.clear_channel_gpio(0, 17)
-    PWM.clear_channel(0)
-    #PWM.cleanup()
-    return width
-
-
-def _do_click_V1001_C_RIGHT(server, fromUser, toUser, doc):
-    try:
-        width = _update_servo_width(USW_PLS)
-        msg = 'servo width is %d.' % width
-    except Exception, e:
-        msg = '_do_click_V1001_C_RIGHT error, %r' % e
-    return server._reply_text(fromUser, toUser, msg)
-
-
-def _do_click_V1001_C_LEFT(server, fromUser, toUser, doc):
-    try:
-        width = _update_servo_width(USW_SUB)
-        msg = 'servo width is %d.' % width
-    except Exception, e:
-        msg = '_do_click_V1001_C_LEFT error, %r' % e
-    return server._reply_text(fromUser, toUser, msg)
-
-
-def _do_click_SNAPSHOT(server, fromUser, toUser, doc):
+def _do_click_V1001_PICTURES(server, fromUser, toUser, doc):
     if not _check_user(fromUser):
         return server._reply_text(fromUser, toUser, u'Permission denied…')
     data = None
     err_msg = 'snapshot fail: '
     try:
-        data = _take_snapshot('192.168.1.12', 34567, server.client)
+        data = _take_snapshot('192.168.1.12', 1101, server.client)
     except Exception, e:
         err_msg += str(e)
         return server._reply_text(fromUser, toUser, err_msg)
     return server._reply_image(fromUser, toUser, data.media_id)
 
 
-def _do_click_V1001_TEMPERATURES(server, fromUser, toUser, doc):
-
-    def _dew_point_fast(t, h):
-        import math
-        a = 17.27
-        b = 237.7
-        temp = (a * t) / (b + t) + math.log(h / 100);
-        td = (b * temp) / (a - temp);
-        return td
-
-    data = '{"name":"environment", "para":{"pin":3}}'
-    buf = _arduino_client(data)
-    data = eval(buf)
-    if type(data) is types.StringType:
-        return server._reply_text(fromUser, toUser, data)
-    errno = data['errno']
-    reply_msg = None
-    if errno == 0:
-        t = data['resp']['t']
-        h = data['resp']['h']
-        td = _dew_point_fast(t, h)
-        reply_msg = "室内温度: %.2f℃\n室内湿度: %.2f\n室内露点: %.2f" %(t, h, td)
-    else:
-        reply_msg = buf
+def _do_click_V1001_COMPUTER(server, fromUser, toUser, doc):
+    import wol
+    ret = False
+    reply_msg = '广播失败'
+    try:
+        ret = wol.wake_on_lan('00:00:00:00:00:00')
+    except Exception, e:
+        print e
+    if ret: reply_msg = '广播成功'
     return server._reply_text(fromUser, toUser, reply_msg)
 
 
 _weixin_click_table = {
-    'V1001_USER_LIST'       :   _do_click_V1001_USER_LIST,
-    'V1001_LED_ON'          :   _do_click_V1001_LED_ON,
-    'V1001_LED_OFF'         :   _do_click_V1001_LED_OFF,
-    'V1001_TEMPERATURES'    :   _do_click_V1001_TEMPERATURES,
-    'V1001_GOOD'            :   _do_click_V1001_GOOD,
-    'V1001_SNAPSHOT'        :   _do_click_SNAPSHOT,
-    'V1001_C_LEFT'          :   _do_click_V1001_C_LEFT,
-    'V1001_C_RIGHT'         :   _do_click_V1001_C_RIGHT
+    'V1001_SOCKET'          :   _do_click_V1001_SOCKET,
+    'V1001_PICTURES'        :   _do_click_V1001_PICTURES,
+    'V1001_COMPUTER'        :   _do_click_V1001_COMPUTER,
+    'V2001_MONITORING'      :   _do_click_V2001_MONITORING,
+    'V2001_LIST'            :   _do_click_V2001_LIST,
+    'V2001_JOIN'            :   _do_click_V2001_JOIN,
 }
 
 
@@ -374,49 +210,6 @@ def _do_text_command(server, fromUser, toUser, content):
         return _weixin_text_command_table[temp[0]](server, fromUser, toUser, temp[1:])
     except KeyError, e:
         return server._reply_text(fromUser, toUser, u'Unknow command: '+temp[0])
-
-
-def _do_text_command_weight(server, fromUser, toUser, para):
-    if not _check_user(fromUser):
-        return server._reply_text(fromUser, toUser, u'Permission denied…')
-    try:
-        w = float(para[0])
-        data = '{"timestamp":"%s","value":%0.2f}' %(current_time(), w)
-        server.yee.datapoint.create(10296, 18659, data)
-    except Exception, e:
-        return server._reply_text(fromUser, toUser, u'do command fail: %s' %e)
-    view = 'http://www.yeelink.net/devices/10296'
-    return server._reply_text(fromUser, toUser, u'upload to:'+view)
-
-
-#def _do_text_command_servo(server, fromUser, toUser, para):
-    #try:
-        #data = '{"name":"servo","para":{"value":%d}}' %(int(para[0]))
-    #except Exception, e:
-        #return server._reply_text(fromUser, toUser, str(e))
-    #buf = _arduino_client(data)
-    #data = eval(buf)
-    #errno = None
-    #reply_msg = None
-    #if type(data) is types.StringType:
-        #return server._reply_text(fromUser, toUser, data)
-    #errno = data['errno']
-    #if errno == 0:
-        #reply_msg = "当前角度: %d" %(data['resp']['v'])
-    #else:
-        #reply_msg = buf
-    #return server._reply_text(fromUser, toUser, reply_msg)
-
-
-def _do_text_command_servo(server, fromUser, toUser, para):
-    try:
-        data = int(para[0])
-    except Exception, e:
-        return server._reply_text(fromUser, toUser, str(e))
-    width = _update_servo_width(USW_OBS, data)
-    reply_msg = "current width %d." %(width)
-    return server._reply_text(fromUser, toUser, reply_msg)
-
 
 def _do_text_command_security(server, fromUser, toUser, para):
     try:
@@ -441,7 +234,7 @@ def _do_text_command_kick_out(server, fromUser, toUser, para):
     msg = 'List is None.'
     wkey = 'wacthers_%s' % server.client.app_id
     try:
-        mc = memcache.Client(['192.168.1.12:11211'], debug=0)
+        mc = memcache.Client(['127.0.0.1:11211'], debug=0)
         wlist = mc.get(wkey)
         if wlist != None:
             del wlist[int(para[0])]
@@ -461,8 +254,6 @@ def _do_text_command_help(server, fromUser, toUser, para):
 
 _weixin_text_command_table = {
     'help'                  :   _do_text_command_help,
-    'weight'                :   _do_text_command_weight,
-    'servo'                 :   _do_text_command_servo,
     'security'              :   _do_text_command_security,
     'kick'                  :   _do_text_command_kick_out
 }
@@ -474,11 +265,9 @@ class weixinserver:
         self.app_root = os.path.dirname(__file__)
         self.templates_root = os.path.join(self.app_root, 'templates')
         self.render = web.template.render(self.templates_root)
-        self.client = WeiXinClient('my_appid', \
-                'my_secret', fc=False, path='192.168.1.12:11211')
+        self.client = WeiXinClient('my_appid',
+                'my_secret', fc=False, path='127.0.0.1:11211')
         self.client.request_access_token()
-        self.yee = YeeLinkClient('yee_key')
-        #GPIO.cleanup()
         GPIO.setmode(GPIO.BCM)
         GPIO.setup(18, GPIO.OUT)
 
@@ -498,28 +287,13 @@ class weixinserver:
 
     def _recv_image(self, fromUser, toUser, doc):
         url = doc.find('PicUrl').text
-        req = urllib2.Request(url)
-        try:
-            resp = urllib2.urlopen(req, timeout = 2)
-        except urllib2.HTTPError, e:
-            return self._reply_text(fromUser, toUser, u'upload fail.')
-        view = 'http://www.yeelink.net/devices/10296'
-        return self._reply_text(fromUser, toUser, u'upload to:'+view)
+        return self._reply_text(fromUser, toUser, u'upload to:'+url)
 
     def _recv_voice(self, fromUser, toUser, doc):
         cmd = doc.find('Recognition').text;
         if cmd is None:
             return self._reply_text(fromUser, toUser, u'no Recognition, no command');
-        if cmd == u'开灯':
-            return _do_click_V1001_LED_ON(self, fromUser, toUser, doc)
-        elif cmd == u'关灯':
-            return _do_click_V1001_LED_OFF(self, fromUser, toUser, doc)
-        elif cmd == u'温度':
-            return _do_click_V1001_TEMPERATURES(self, fromUser, toUser, doc)
-        elif cmd == u'照片':
-            return _do_click_SNAPSHOT(self, fromUser, toUser, doc)
-        else:
-            return self._reply_text(fromUser, toUser, u'Unknow command: ' + cmd);
+        self._reply_text(fromUser, toUser, u'Unknow command: ' + cmd);
 
     def _recv_video(self, fromUser, toUser, doc):
         pass
@@ -541,8 +315,12 @@ class weixinserver:
 
     def GET(self):
         data = web.input()
-        if _check_hash(data):
-            return data.echostr
+        try:
+            if _check_hash(data):
+                return data.echostr
+        except Exception, e:
+            print e
+            return None
 
     def POST(self):
         str_xml = web.data()

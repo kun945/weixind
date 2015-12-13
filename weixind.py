@@ -9,6 +9,7 @@ import web
 import time
 import types
 import hashlib
+import base64
 import memcache
 import RPi.GPIO as GPIO
 from lxml import etree
@@ -42,6 +43,36 @@ def _check_user(user_id):
         return True
     return False
 
+
+def _punctuation_clear(ostr):
+    '''Clear XML or dict using special punctuation'''
+    return str(ostr).translate(None, '\'\"<>&')
+
+
+def _cpu_and_gpu_temp():
+    '''Get from pi'''
+    import commands
+    try:
+        fd = open('/sys/class/thermal/thermal_zone0/temp')
+        ctemp = fd.read()
+        fd.close()
+        gtemp = commands.getoutput('/opt/vc/bin/vcgencmd measure_temp').replace('temp=', '').replace('\'C', '')
+    except Exception, e:
+        #print e
+        return (0, 0)
+    return (float(ctemp) / 1000, float(gtemp))
+
+
+
+def _json_to_ditc(ostr):
+    import json
+    try:
+        return json.loads(ostr)
+    except Exception, e:
+        #print e
+        return None
+
+
 def _get_user_info(wc):
     info_list = []
     wkey = 'wacthers_%s' % wc.app_id
@@ -58,19 +89,23 @@ def _get_user_info(wc):
     return info_list
 
 
-def _arduino_client(data):
+def _udp_client(addr, data):
     import select
     import socket
+    mm = '{"errno":1, "msg":"d2FpdCByZXNwb25zZSB0aW1lb3V0"}'
     c = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     c.setblocking(False)
     inputs = [c]
-    c.connect(('192.168.1.10', 6666))
+    c.connect(addr)
     c.sendall(data)
     readable, writeable, exceptional = select.select(inputs, [], [], 3)
-    if not readable:
-        return '{"errno": -1, "msg":"wait response timeout"}'
-    else:
-        return c.recv(1024)
+    try:
+        if readable: mm = c.recv(2000)
+    except Exception, e:
+        mm = '{"errno":1, "msg":"%s"}' %(base64.b64encode(_punctuation_clear(e)))
+    finally:
+        c.close()
+    return mm
 
 
 def _take_snapshot(addr, port, client):
@@ -101,7 +136,7 @@ def _do_event_CLICK(server, fromUser, toUser, doc):
     try:
         return _weixin_click_table[key](server, fromUser, toUser, doc)
     except KeyError, e:
-        print '_do_event_CLICK: %s' %e
+        #print '_do_event_CLICK: %s' %e
         return server._reply_text(fromUser, toUser, u'Unknow click: '+key)
 
 
@@ -149,7 +184,7 @@ def _do_click_V2001_JOIN(server, fromUser, toUser, doc):
             wlist.append(fromUser)
         mc.replace(wkey, wlist)
     except Exception, e:
-        msg = '_do_click_V1001_GOOD error, %r' % e
+        msg = '_do_click_V2001_JOIN error, %r' % e
     return server._reply_text(fromUser, toUser, msg)
 
 
@@ -158,14 +193,8 @@ def _do_click_V2001_MONITORING(server, fromUser, toUser, doc):
 
 
 def _do_click_V1001_SOCKET(server, fromUser, toUser, doc):
-    if GPIO.input(18):
-        GPIO.output(18, GPIO.LOW)
-    else:
-        GPIO.output(18, GPIO.HIGH)
-    if GPIO.input(18):
-        reply_msg = '打开状态'
-    else:
-        reply_msg = '关闭状态'
+    GPIO.output(18, GPIO.LOW) if GPIO.input(18) else GPIO.output(18, GPIO.HIGH)
+    reply_msg = '打开状态' if GPIO.input(18) else '关闭状态'
     return server._reply_text(fromUser, toUser, reply_msg)
 
 
@@ -177,30 +206,50 @@ def _do_click_V1001_PICTURES(server, fromUser, toUser, doc):
     try:
         data = _take_snapshot('192.168.1.12', 1101, server.client)
     except Exception, e:
-        err_msg += str(e)
+        err_msg += _punctuation_clear(e)
         return server._reply_text(fromUser, toUser, err_msg)
     return server._reply_image(fromUser, toUser, data.media_id)
 
 
-def _do_click_V1001_COMPUTER(server, fromUser, toUser, doc):
+def _do_click_V1001_TEMPERATURE(server, fromUser, toUser, doc):
+    import dht11
+    c, g = _cpu_and_gpu_temp()
+    h, t = dht11.read(0)
+    reply_msg = u'CPU : %.02f℃\nGPU : %.02f℃\n湿度 : %02.02f\n温度 : %02.02f' %(c, g, h, t)
+    return server._reply_text(fromUser, toUser, reply_msg)
+
+
+def _do_click_V3001_WAKEUP(server, fromUser, toUser, doc):
     import wol
     ret = False
     reply_msg = '广播失败'
     try:
         ret = wol.wake_on_lan('00:00:00:00:00:00')
     except Exception, e:
-        print e
+        #print e
+        pass
     if ret: reply_msg = '广播成功'
     return server._reply_text(fromUser, toUser, reply_msg)
+
+
+def _do_click_V3001_SHUTDOWN(server, fromUser, toUser, doc):
+    return _do_text_command_pc(server, fromUser, toUser, ['shutdown -s -t 60'])
+
+
+def _do_click_V3001_UNDO(server, fromUser, toUser, doc):
+    return _do_text_command_pc(server, fromUser, toUser, ['shutdown -a'])
 
 
 _weixin_click_table = {
     'V1001_SOCKET'          :   _do_click_V1001_SOCKET,
     'V1001_PICTURES'        :   _do_click_V1001_PICTURES,
-    'V1001_COMPUTER'        :   _do_click_V1001_COMPUTER,
+    'V1001_TEMPERATURE'     :   _do_click_V1001_TEMPERATURE,
     'V2001_MONITORING'      :   _do_click_V2001_MONITORING,
     'V2001_LIST'            :   _do_click_V2001_LIST,
     'V2001_JOIN'            :   _do_click_V2001_JOIN,
+    'V3001_WAKEUP'          :   _do_click_V3001_WAKEUP,
+    'V3001_SHUTDOWN'        :   _do_click_V3001_SHUTDOWN,
+    'V3001_UNDO'            :   _do_click_V3001_UNDO,
 }
 
 
@@ -211,13 +260,14 @@ def _do_text_command(server, fromUser, toUser, content):
     except KeyError, e:
         return server._reply_text(fromUser, toUser, u'Unknow command: '+temp[0])
 
+
 def _do_text_command_security(server, fromUser, toUser, para):
     try:
         data = '{"name":"digitalWrite","para":{"pin":5,"value":%d}}' %(int(para[0]))
     except Exception, e:
         return server._reply_text(fromUser, toUser, str(e))
-    buf = _arduino_client(data)
-    data = eval(buf)
+    buf = _udp_client(('10.0.0.100', 6666), data)
+    data = _json_to_ditc(buf)
     errno = None
     reply_msg = None
     if type(data) is types.StringType:
@@ -227,6 +277,24 @@ def _do_text_command_security(server, fromUser, toUser, para):
         reply_msg = data['msg']
     else:
         reply_msg = buf
+    return server._reply_text(fromUser, toUser, reply_msg)
+
+
+def _do_text_command_pc(server, fromUser, toUser, para):
+    if not _check_user(fromUser):
+        return server._reply_text(fromUser, toUser, u'Permission denied…')
+    if para[0] == 'wol':
+        return _do_click_V3001_WAKEUP(server, fromUser, toUser, para)
+    print para[0]
+    buf = _udp_client(('10.0.0.100', 55555), para[0])
+    data = _json_to_ditc(buf)
+    if not data:
+        reply_msg = _punctuation_clear(buf.decode('gbk'))
+    else:
+        errno = data['errno']
+        reply_msg = data['msg']
+        reply_msg = (base64.b64decode(reply_msg)).decode('gbk') if reply_msg \
+                else ('运行失败' if errno else '运行成功')
     return server._reply_text(fromUser, toUser, reply_msg)
 
 
@@ -255,7 +323,8 @@ def _do_text_command_help(server, fromUser, toUser, para):
 _weixin_text_command_table = {
     'help'                  :   _do_text_command_help,
     'security'              :   _do_text_command_security,
-    'kick'                  :   _do_text_command_kick_out
+    'kick'                  :   _do_text_command_kick_out,
+    'pc'                    :   _do_text_command_pc
 }
 
 
@@ -283,17 +352,25 @@ class weixinserver:
         try:
             return _weixin_event_table[event](self, fromUser, toUser, doc)
         except KeyError, e:
-            return self._reply_text(fromUser, toUser, u'Unknow event: '+event)
+            return self._reply_text(fromUser, toUser, u'Unknow event:%s' %event)
 
     def _recv_image(self, fromUser, toUser, doc):
         url = doc.find('PicUrl').text
-        return self._reply_text(fromUser, toUser, u'upload to:'+url)
+        return self._reply_text(fromUser, toUser, u'upload to:%s' %url)
 
     def _recv_voice(self, fromUser, toUser, doc):
-        cmd = doc.find('Recognition').text;
+        import subprocess
+        cmd = doc.find('Recognition').text
+        mid = doc.find('MediaId').text
+        rm = self.client.media.get.file(media_id=mid)
+        fd = open('/tmp/test.amr', 'wb')
+        fd.write(rm.read())
+        fd.close()
+        rm.close()
+        subprocess.call(['omxplayer', '-o', 'local', '/tmp/test.amr'])
         if cmd is None:
             return self._reply_text(fromUser, toUser, u'no Recognition, no command');
-        self._reply_text(fromUser, toUser, u'Unknow command: ' + cmd);
+        return self._reply_text(fromUser, toUser, u'Unknow recognition:%s' %cmd);
 
     def _recv_video(self, fromUser, toUser, doc):
         pass
@@ -319,7 +396,7 @@ class weixinserver:
             if _check_hash(data):
                 return data.echostr
         except Exception, e:
-            print e
+            #print e
             return None
 
     def POST(self):
@@ -328,7 +405,8 @@ class weixinserver:
         msgType = doc.find('MsgType').text
         fromUser = doc.find('FromUserName').text
         toUser = doc.find('ToUserName').text
-        #print 'from:%s-->to:%s' %(fromUser, toUser)
+        print 'from:%s-->to:%s' %(fromUser, toUser)
+        #print str_xml
         if msgType == 'text':
             return self._recv_text(fromUser, toUser, doc)
         if msgType == 'event':

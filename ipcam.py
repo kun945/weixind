@@ -61,15 +61,15 @@ def _ipcam_http_call(ipcam, method, url, **kw):
     stream, params = _parse_params(**kw)
     if params:
         url = '%s?%s' %(url, params)
-    print _ipcam_http_call.func_name, url
+    #print _ipcam_http_call.func_name, url
     if ipcam._user and ipcam._pass:
         auth = HTTPDigestAuth(ipcam._user,ipcam._pass)
     if method == _HTTP_GET:
-        resp = requests.get(url, auth=auth, stream=stream, timeout=2)
+        resp = requests.get(url, auth=auth, stream=stream, timeout=8)
     if resp.status_code != 200:
         resp.close()
         raise IPCamError(4001, 'request server failed, status_code=%d' %resp.status_code)
-    print resp.headers['Content-Type']
+    #print resp.headers['Content-Type']
     if resp.headers['Content-Type'] == _IMAGE_CONTENT_TYPE:
         return Image(resp)
     if resp.headers['Content-Type'] == _VIDEO_CONTENT_TYPE:

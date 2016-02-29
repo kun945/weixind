@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # Filename:     weixind.py
-# Author:       Liang Cha<my_token@gmail.com>
+# Author:       Liang Cha<ckmx945@gmail.com>
 # CreateDate:   2014-05-15
 
 import os
@@ -15,6 +15,7 @@ import RPi.GPIO as GPIO
 from lxml import etree
 from weixin import WeiXinClient
 from weixin import APIError
+from weixin import AccessTokenError
 
 
 _TOKEN = 'my_token'
@@ -32,8 +33,7 @@ def _check_hash(data):
     sha1 = hashlib.sha1()
     map(sha1.update, list)
     hashcode = sha1.hexdigest()
-    if hashcode == signature:
-        return True
+    if hashcode == signature: return True
     return False
 
 
@@ -58,7 +58,6 @@ def _cpu_and_gpu_temp():
         fd.close()
         gtemp = commands.getoutput('/opt/vc/bin/vcgencmd measure_temp').replace('temp=', '').replace('\'C', '')
     except Exception, e:
-        #print e
         return (0, 0)
     return (float(ctemp) / 1000, float(gtemp))
 
@@ -69,7 +68,6 @@ def _json_to_ditc(ostr):
     try:
         return json.loads(ostr)
     except Exception, e:
-        #print e
         return None
 
 
@@ -81,7 +79,7 @@ def _get_user_info(wc):
     if id_list is None:
         return info_list
     for open_id in id_list:
-        req = wc.user.info._get(openid=open_id, lang='zh_CN')
+        req = wc.user.info.dget(openid=open_id, lang='zh_CN')
         name ='%s' %(req.nickname)
         place = '%s,%s,%s' %(req.country, req.province, req.city)
         sex = '%s' %(u'男') if (req.sex == 1) else u'女'
@@ -110,9 +108,9 @@ def _udp_client(addr, data):
 
 def _take_snapshot(addr, port, client):
     import ipcam
-    cam = ipcam.IPCamClient('10.0.0.101', 11000, 'll', '8898')
+    cam = ipcam.IPCamClient('10.0.0.101', 34567, 'll', '123321')
     vd = cam.photoaf.get()
-    return client.media.upload.file(type='image', pic=vd)
+    return client.media.upload.file(type='image', jpg=vd)
 
 
 def _do_event_subscribe(server, fromUser, toUser, doc):
@@ -151,20 +149,18 @@ _weixin_event_table = {
 
 def _do_click_V2001_LIST(server, fromUser, toUser, doc):
     reply_msg = ''
-    user_list = None
+    user_list = []
     try:
         user_list = _get_user_info(server.client)
-    except Exception, e:
-        reply_msg = '_get_user_info error: %r', e
+    except AccessTokenError, e:
+        reply_msg = '_get_user_info error: %s' %(_punctuation_clear(str(e)))
         server.client.refurbish_access_token()
+    except Exception, e:
+        reply_msg = '_get_user_info error: %s' %(_punctuation_clear(str(e)))
     if user_list:
-        index = 0
-        for user in user_list:
-            reply_msg = '%s[%d]%s|%s|%s\n' %(reply_msg, index, user['name'], user['place'], user['sex'])
-            index += 1
-    else:
-        if not reply_msg:
-            reply_msg = 'None user.'
+        reply_msg = ['%s|%s|%s' %(user['name'], user['place'], user['sex']) for user in user_list]
+        reply_msg = '\n'.join(reply_msg)
+    if not reply_msg: reply_msg = 'No one subscription'
     return server._reply_text(fromUser, toUser, reply_msg)
 
 
@@ -206,7 +202,7 @@ def _do_click_V1001_PICTURES(server, fromUser, toUser, doc):
     try:
         data = _take_snapshot('192.168.1.12', 1101, server.client)
     except Exception, e:
-        err_msg += _punctuation_clear(e)
+        err_msg += _punctuation_clear(str(e))
         return server._reply_text(fromUser, toUser, err_msg)
     return server._reply_image(fromUser, toUser, data.media_id)
 
@@ -320,11 +316,22 @@ def _do_text_command_help(server, fromUser, toUser, para):
     return server._reply_text(fromUser, toUser, data)
 
 
+def _do_text_command_ss(server, fromUser, toUser, para):
+    import ssc
+    msg = ''
+    def _unkonw_def():
+        return 'unkonw ss command: %s' %para[0]
+    ssdef = getattr(ssc, para[0], _unkonw_def)
+    msg = ssdef(*para[1:])
+    return server._reply_text(fromUser, toUser, msg)
+
+
 _weixin_text_command_table = {
     'help'                  :   _do_text_command_help,
     'security'              :   _do_text_command_security,
     'kick'                  :   _do_text_command_kick_out,
-    'pc'                    :   _do_text_command_pc
+    'pc'                    :   _do_text_command_pc,
+    'ss'                    :   _do_text_command_ss,
 }
 
 
@@ -334,9 +341,11 @@ class weixinserver:
         self.app_root = os.path.dirname(__file__)
         self.templates_root = os.path.join(self.app_root, 'templates')
         self.render = web.template.render(self.templates_root)
-        self.client = WeiXinClient('my_appid',
-                'my_secret', fc=False, path='127.0.0.1:11211')
-        self.client.request_access_token()
+        self.client = WeiXinClient('my_appid', 'my_secret')
+        try:
+            self.client.request_access_token()
+        except Exception, e:
+            self.client.set_access_token('ThisIsAFakeToken', 1800, persistence=True)
         GPIO.setmode(GPIO.BCM)
         GPIO.setup(18, GPIO.OUT)
 
@@ -356,24 +365,33 @@ class weixinserver:
 
     def _recv_image(self, fromUser, toUser, doc):
         url = doc.find('PicUrl').text
+        mid = doc.find('MediaId').text
+        rm = self.client.media.get.file(media_id=mid)
+        fname = '/home/pi/downloads/wx/wx_%s.jpg' %(time.strftime("%Y_%m_%dT%H_%M_%S", time.localtime()))
+        fd = open(fname, 'wb'); fd.write(rm.read()); fd.close(); rm.close()
         return self._reply_text(fromUser, toUser, u'upload to:%s' %url)
 
     def _recv_voice(self, fromUser, toUser, doc):
-        import subprocess
+        #import subprocess
         cmd = doc.find('Recognition').text
         mid = doc.find('MediaId').text
         rm = self.client.media.get.file(media_id=mid)
-        fd = open('/tmp/test.amr', 'wb')
-        fd.write(rm.read())
-        fd.close()
-        rm.close()
-        subprocess.call(['omxplayer', '-o', 'local', '/tmp/test.amr'])
+        fname = '/home/pi/downloads/wx/wx_%s.amr' %(time.strftime("%Y_%m_%dT%H_%M_%S", time.localtime()))
+        fd = open(fname, 'wb'); fd.write(rm.read()); fd.close(); rm.close()
+        #subprocess.call(['omxplayer', '-o', 'local', fname])
         if cmd is None:
             return self._reply_text(fromUser, toUser, u'no Recognition, no command');
         return self._reply_text(fromUser, toUser, u'Unknow recognition:%s' %cmd);
 
     def _recv_video(self, fromUser, toUser, doc):
         pass
+
+    def _recv_shortvideo(self, fromUser, toUser, doc):
+        mid = doc.find('MediaId').text
+        rm = self.client.media.get.file(media_id=mid)
+        fname = '/home/pi/downloads/wx/wx_%s.mp4' %(time.strftime("%Y_%m_%dT%H_%M_%S", time.localtime()))
+        fd = open(fname, 'wb'); fd.write(rm.read()); fd.close(); rm.close()
+        return self._reply_text(fromUser, toUser, u'shortvideo:%s' %fname);
 
     def _recv_location(self, fromUser, toUser, doc):
         pass
@@ -417,6 +435,8 @@ class weixinserver:
             return self._recv_voice(fromUser, toUser, doc)
         if msgType == 'video':
             return self._recv_video(fromUser, toUser, doc)
+        if msgType == 'shortvideo':
+            return self._recv_shortvideo(fromUser, toUser, doc)
         if msgType == 'location':
             return self._recv_location(fromUser, toUser, doc)
         if msgType == 'link':
